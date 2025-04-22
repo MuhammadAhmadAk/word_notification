@@ -234,34 +234,45 @@ const COMPLETION_NOTIFICATION_DELAY = 5 * 1000; // 5 seconds
 const deviceNotificationIntervals = new Map();
 
 const isWithinTimeWindow = () => {
-  const now = new Date();
+  const now = new Date(); // System time
   const hour = now.getHours();
-  return hour >= START_HOUR && hour < END_HOUR;
+  const isWithin = hour >= START_HOUR && hour < END_HOUR;
+  console.log(`Time window check at ${now.toLocaleString()}: ${isWithin ? 'Within window' : 'Outside window'} (${hour}:00)`);
+  return isWithin;
 };
 
 const startNotificationSchedule = async (mobileId, deviceToken) => {
   try {
+    const now = new Date();
+    console.log(`Starting notification schedule at ${now.toLocaleString()} for mobileId: ${mobileId}`);
+
     if (deviceNotificationIntervals.has(mobileId)) {
-      console.log(`Clearing existing interval for mobileId ${mobileId}`);
+      console.log(`Clearing existing interval for mobileId ${mobileId} at ${now.toLocaleString()}`);
       clearInterval(deviceNotificationIntervals.get(mobileId));
       deviceNotificationIntervals.delete(mobileId);
     }
 
     let deviceStatus = await getDeviceStatus(mobileId);
     if (!deviceStatus) {
-      console.log(`No device status found, initializing for mobileId ${mobileId}`);
+      console.log(`No device status found at ${now.toLocaleString()}, initializing for mobileId ${mobileId}`);
       await saveDeviceToken(mobileId, deviceToken);
       deviceStatus = await getDeviceStatus(mobileId);
     }
 
-    // Calculate starting word index based on days learning and notification count
-    const baseWordIndex = ((deviceStatus.daysLearning || 1) - 1) * MAX_WORD_NOTIFICATIONS;
+    // Calculate base word index based on total words learned (15 per day)
+    const completedDays = Math.floor(deviceStatus.wordsLearned / MAX_WORD_NOTIFICATIONS);
+    const baseWordIndex = completedDays * MAX_WORD_NOTIFICATIONS;
     let currentWordIndex = baseWordIndex + (deviceStatus.notificationCount || 0);
 
+    console.log(`Initial word index for mobileId ${mobileId}: ${currentWordIndex} (Completed days: ${completedDays}, Words learned: ${deviceStatus.wordsLearned})`);
+
     const interval = setInterval(async () => {
+      const checkTime = new Date();
+      console.log(`Checking notification conditions at ${checkTime.toLocaleString()} for mobileId: ${mobileId}`);
+
       try {
         if (!isWithinTimeWindow()) {
-          console.log(`Outside notification time window for mobileId ${mobileId}`);
+          console.log(`Outside notification time window for mobileId ${mobileId} at ${checkTime.toLocaleString()}`);
           return;
         }
 
@@ -323,14 +334,14 @@ const startNotificationSchedule = async (mobileId, deviceToken) => {
           handleCompletionNotification(mobileId, deviceToken);
         }
       } catch (error) {
-        console.error(`Error in notification interval for ${mobileId}:`, error);
+        console.error(`Error in notification interval for ${mobileId} at ${checkTime.toLocaleString()}:`, error);
       }
     }, NOTIFICATION_INTERVAL_MS);
 
     deviceNotificationIntervals.set(mobileId, interval);
-    console.log(`Notification schedule started for mobileId ${mobileId}`);
+    console.log(`Notification schedule started at ${now.toLocaleString()} for mobileId ${mobileId}`);
   } catch (error) {
-    console.error(`Error starting notification schedule for ${mobileId}:`, error);
+    console.error(`Error starting notification schedule for ${mobileId} at ${new Date().toLocaleString()}:`, error);
     throw error;
   }
 };
@@ -341,23 +352,35 @@ const handleCompletionNotification = async (mobileId, deviceToken) => {
     setTimeout(async () => {
       if (isWithinTimeWindow()) {
         const summary = await getDeviceSummary(mobileId);
-        const summaryText = `You learned ${
-          summary.totalWords
-        } new words today! You've been learning for ${
-          summary.daysLearning
-        } day${summary.daysLearning !== 1 ? "s" : ""}!`;
+        // Since this is called after completing all 15 words
+        const wordsToday = MAX_WORD_NOTIFICATIONS; // This should be 15
+        const totalWords = summary.totalWordsLearned || 0;
+        
+        // Calculate completed days
+        const daysCompleted = Math.floor(totalWords / MAX_WORD_NOTIFICATIONS);
+        
+        // If this is the first set of 15 words
+        const isFirstDay = daysCompleted === 1;
+        
+        const summaryText = isFirstDay 
+          ? `Congratulations! You've completed your first ${MAX_WORD_NOTIFICATIONS} words today!` 
+          : `Great job! You've learned ${MAX_WORD_NOTIFICATIONS} new words today! You've completed ${daysCompleted} full ${
+              daysCompleted !== 1 ? 'days' : 'day'
+            } of learning with a total of ${totalWords} words!`;
 
         await sendNotification(
           deviceToken,
-          "Your Today's Task Completed!",
+          "Today's Learning Completed! 🎉",
           summaryText,
           {
             payload: "completion_notification",
             summary: summary.words,
-            daysLearning: String(summary.daysLearning),
+            daysCompleted: String(daysCompleted),
+            totalWords: String(totalWords),
+            wordsToday: String(MAX_WORD_NOTIFICATIONS)
           }
         );
-        console.log(`Completion notification sent to mobileId ${mobileId}`);
+        console.log(`Completion notification sent to mobileId ${mobileId} with summary: ${summaryText}`);
       }
     }, COMPLETION_NOTIFICATION_DELAY);
   } catch (error) {
@@ -432,7 +455,7 @@ const resetAllDevicesNotificationCount = async () => {
 
 // Schedule daily reset
 const scheduleDaily = () => {
-  const now = new Date();
+  const now = new Date(); // System time
   const nextMidnight = new Date(
     now.getFullYear(),
     now.getMonth(),
@@ -440,7 +463,10 @@ const scheduleDaily = () => {
   );
   const timeToMidnight = nextMidnight - now;
 
+  console.log(`Scheduling next daily reset at ${nextMidnight.toLocaleString()} (in ${Math.floor(timeToMidnight/1000/60)} minutes)`);
+
   setTimeout(() => {
+    console.log(`Executing daily reset at ${new Date().toLocaleString()}`);
     resetAllDevicesNotificationCount();
     scheduleDaily(); // Schedule next reset
   }, timeToMidnight);
@@ -468,5 +494,7 @@ module.exports = {
   createWordsNotification,
   getWordHistory,
 };
+
+
 
 

@@ -2,6 +2,8 @@ const admin = require("firebase-admin");
 
 const db = admin.firestore();
 
+const MAX_WORD_NOTIFICATIONS = 16;
+
 const saveDeviceToken = async (mobileId, deviceToken) => {
   try {
     console.log(`Saving device token for mobileId: ${mobileId}`);
@@ -34,35 +36,39 @@ const saveWordToSummaryCollection = async (mobileId, word, dayNumber, wordNumber
     const summaryRef = db.collection("word_summaries").doc(mobileId);
     const summaryDoc = await summaryRef.get();
     
-    const now = new Date();
+    const now = new Date(); // System time
+    console.log(`Saving word at ${now.toLocaleString()} for mobileId: ${mobileId}`);
+    
     const wordEntry = {
       portuguese: word.portuguese,
       french: word.french,
-      learningDate: now.toISOString(),
+      learningDate: now,
       dayNumber: dayNumber,
       wordNumber: wordNumber,
-      timestamp: now.toISOString()  // Changed from serverTimestamp to ISO string
+      timestamp: now
     };
 
     if (!summaryDoc.exists) {
       await summaryRef.set({
         mobileId: mobileId,
         totalWordsLearned: 1,
-        lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+        lastUpdated: now,
         wordHistory: [wordEntry]
       });
+      console.log(`Created new summary document for mobileId: ${mobileId}`);
     } else {
       await summaryRef.update({
         totalWordsLearned: admin.firestore.FieldValue.increment(1),
-        lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+        lastUpdated: now,
         wordHistory: admin.firestore.FieldValue.arrayUnion(wordEntry)
       });
+      console.log(`Updated existing summary document for mobileId: ${mobileId}`);
     }
 
-    console.log(`Word saved to summary collection for mobileId: ${mobileId}`);
+    console.log(`Word saved successfully: ${JSON.stringify(wordEntry)}`);
     return true;
   } catch (error) {
-    console.error(`Error saving word to summary for mobileId ${mobileId}:`, error);
+    console.error(`Error saving word to summary for mobileId ${mobileId} at ${new Date().toLocaleString()}:`, error);
     throw error;
   }
 };
@@ -99,64 +105,59 @@ const updateDeviceNotificationStatus = async (
   word
 ) => {
   try {
-    console.log(`Updating notification status for mobileId: ${mobileId}`);
+    const now = new Date();
+    console.log(`Updating notification status at ${now.toLocaleString()} for mobileId: ${mobileId}`);
+    
     const deviceRef = db.collection("devices").doc(mobileId);
     const deviceDoc = await deviceRef.get();
     
     if (!deviceDoc.exists) {
-      console.error(`Device ${mobileId} not found in database`);
+      console.error(`Device ${mobileId} not found in database at ${now.toLocaleString()}`);
       return { success: false, error: 'DEVICE_NOT_FOUND' };
     }
 
     const deviceData = deviceDoc.data();
-    const now = new Date();
     const today = new Date(
       now.getFullYear(),
       now.getMonth(),
       now.getDate()
-    ).toISOString();
+    );
 
-    let daysLearning = deviceData.daysLearning || 0;
+    // Calculate days learning based on total words learned
+    const totalWordsLearned = deviceData.wordsLearned || 0;
+    const daysLearning = Math.floor(totalWordsLearned / MAX_WORD_NOTIFICATIONS) + 1;
     const lastLearningDate = deviceData.lastLearningDate;
-    let wordsLearned = deviceData.wordsLearned || 0;
 
-    // Check if it's a new day
-    if (!lastLearningDate || new Date(lastLearningDate).toISOString() !== today) {
-      daysLearning += 1;
-      // Reset words array for the new day
+    // Reset daily words array if it's a new day
+    if (!lastLearningDate || new Date(lastLearningDate).getDate() !== today.getDate()) {
+      console.log(`New day detected for mobileId: ${mobileId}. Current learning day: ${daysLearning}`);
       await deviceRef.update({ words: [] });
     }
-
-    // Calculate the starting word index based on days learning
-    const baseWordIndex = (daysLearning - 1) * 15;
-    currentWordIndex = baseWordIndex + (notificationCount - 1);
 
     const updateData = {
       notificationCount,
       currentWordIndex,
-      lastNotificationDate: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastNotificationDate: now,
+      updatedAt: now,
       daysLearning,
       lastLearningDate: today,
-      wordsLearned: wordsLearned + 1,
+      wordsLearned: totalWordsLearned + 1,
       words: admin.firestore.FieldValue.arrayUnion({
         portuguese: word.portuguese,
         french: word.french,
-        sentAt: now.toISOString(),
+        sentAt: now,
         dayNumber: daysLearning,
         wordNumber: notificationCount
       }),
     };
 
     await deviceRef.update(updateData);
-
-    // Save word to summary collection
     await saveWordToSummaryCollection(mobileId, word, daysLearning, notificationCount);
 
-    console.log(`Successfully updated notification status for mobileId: ${mobileId}`);
+    console.log(`Successfully updated notification status at ${now.toLocaleString()} for mobileId: ${mobileId}`);
     return { success: true };
   } catch (error) {
-    console.error(`Error updating device notification status for mobileId ${mobileId}:`, error);
+    console.error(`Error updating device notification status for mobileId ${mobileId} at ${new Date().toLocaleString()}:`, error);
     throw error;
   }
 };
@@ -229,6 +230,10 @@ module.exports = {
   getDeviceSummary,
   getWordSummaryHistory,
 };
+
+
+
+
 
 
 
