@@ -35,15 +35,15 @@ const sendNotification = async (deviceToken, title, body, data = {}) => {
         title,
         body,
       },
-      data: stringifiedData, // Use the stringified data
+      data: stringifiedData,
     };
 
     const response = await admin.messaging().send(message);
     console.log("Notification sent successfully:", response);
-    return response;
+    return { success: true, response }; // Return success object with response
   } catch (error) {
     console.error("Error sending notification:", error);
-    throw new Error("Failed to send notification.");
+    return { success: false, error: error.message }; // Return failure object with error
   }
 };
 

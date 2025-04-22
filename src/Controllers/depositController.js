@@ -4,6 +4,7 @@ const {
   updateDeviceNotificationStatus,
   getDeviceStatus,
   getDeviceSummary,
+  getWordSummaryHistory,
 } = require("../services/firestore_service");
 
 // Word database
@@ -210,6 +211,14 @@ const wordDatabase = [
   { portuguese: "Energia", french: "Énergie" },
 ];
 
+if (
+  !wordDatabase ||
+  !Array.isArray(wordDatabase) ||
+  wordDatabase.length === 0
+) {
+  console.error("Word database is not properly initialized");
+  throw new Error("Word database is not available");
+}
 // State to track notifications and word index
 let notificationCount = 0;
 let currentWordIndex = 0;
@@ -231,123 +240,132 @@ const isWithinTimeWindow = () => {
 };
 
 const startNotificationSchedule = async (mobileId, deviceToken) => {
-  // Check if notifications are already running for this device
-  if (deviceNotificationIntervals.has(mobileId)) {
-    console.log(
-      `Notification schedule already running for device with mobileId ${mobileId}`
-    );
-    return;
-  }
-
-  // Get or initialize device's notification status
-  let deviceStatus = await getDeviceStatus(mobileId);
-  if (!deviceStatus) {
-    await saveDeviceToken(mobileId, deviceToken);
-    deviceStatus = await getDeviceStatus(mobileId);
-  }
-
-  const interval = setInterval(async () => {
-    try {
-      if (!isWithinTimeWindow()) {
-        console.log(
-          `Outside notification time window for device with mobileId ${mobileId}`
-        );
-        return;
-      }
-
-      deviceStatus = await getDeviceStatus(mobileId);
-      if (deviceStatus.notificationCount >= MAX_WORD_NOTIFICATIONS) {
-        console.log(
-          `Max notifications reached for device with mobileId ${mobileId}`
-        );
-        clearInterval(interval);
-        deviceNotificationIntervals.delete(mobileId);
-        return;
-      }
-
-      // Select the current word
-      const word = wordDatabase[deviceStatus.currentWordIndex];
-
-      // Send notification
-      const notificationTitle = `New Word: ${word.portuguese}`;
-      const notificationBody = `Portuguese: ${word.portuguese} | French: ${word.french}`;
-
-      const result = await sendNotification(
-        deviceToken,
-        notificationTitle,
-        notificationBody,
-        {
-          payload: "word_notification",
-        }
-      );
-
-      if (!result.success && result.error === "TOKEN_EXPIRED") {
-        clearInterval(interval);
-        deviceNotificationIntervals.delete(mobileId);
-        // Mark the device token as invalid in Firestore
-        await db.collection("devices").doc(mobileId).update({
-          isValid: false,
-          invalidatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-        return;
-      }
-
-      // Update device's notification status with the word
-      const newWordIndex =
-        (deviceStatus.currentWordIndex + 1) % wordDatabase.length;
-      const newNotificationCount = deviceStatus.notificationCount + 1;
-
-      await updateDeviceNotificationStatus(
-        mobileId,
-        newNotificationCount,
-        newWordIndex,
-        word
-      );
-
-      console.log(
-        `Word Notification ${newNotificationCount}/${MAX_WORD_NOTIFICATIONS} sent to device with mobileId ${mobileId}`
-      );
-
-      // Check if this was the last word notification
-      if (newNotificationCount === MAX_WORD_NOTIFICATIONS) {
-        setTimeout(async () => {
-          if (isWithinTimeWindow()) {
-            // Get device summary before sending completion notification
-            const summary = await getDeviceSummary(mobileId);
-            const summaryText = `You learned ${
-              summary.totalWords
-            } new words today! You've been learning for ${
-              summary.daysLearning
-            } day${summary.daysLearning !== 1 ? "s" : ""}!`;
-
-            await sendNotification(
-              deviceToken,
-              "Your Today's Task Completed!",
-              summaryText,
-              {
-                payload: "completion_notification",
-                summary: summary.words,
-                daysLearning: String(summary.daysLearning), // Convert to string for FCM
-              }
-            );
-            console.log(
-              `Completion notification sent to device with mobileId ${mobileId}`
-            );
-          }
-        }, COMPLETION_NOTIFICATION_DELAY);
-
-        clearInterval(interval);
-        deviceNotificationIntervals.delete(mobileId);
-      }
-    } catch (error) {
-      console.error(
-        `Error in notification schedule for device with mobileId ${mobileId}:`,
-        error
-      );
+  try {
+    if (deviceNotificationIntervals.has(mobileId)) {
+      console.log(`Clearing existing interval for mobileId ${mobileId}`);
+      clearInterval(deviceNotificationIntervals.get(mobileId));
+      deviceNotificationIntervals.delete(mobileId);
     }
-  }, NOTIFICATION_INTERVAL_MS);
 
-  deviceNotificationIntervals.set(mobileId, interval);
+    let deviceStatus = await getDeviceStatus(mobileId);
+    if (!deviceStatus) {
+      console.log(`No device status found, initializing for mobileId ${mobileId}`);
+      await saveDeviceToken(mobileId, deviceToken);
+      deviceStatus = await getDeviceStatus(mobileId);
+    }
+
+    // Calculate starting word index based on days learning and notification count
+    const baseWordIndex = ((deviceStatus.daysLearning || 1) - 1) * MAX_WORD_NOTIFICATIONS;
+    let currentWordIndex = baseWordIndex + (deviceStatus.notificationCount || 0);
+
+    const interval = setInterval(async () => {
+      try {
+        if (!isWithinTimeWindow()) {
+          console.log(`Outside notification time window for mobileId ${mobileId}`);
+          return;
+        }
+
+        deviceStatus = await getDeviceStatus(mobileId);
+        if (!deviceStatus) {
+          console.error(`Device ${mobileId} not found, stopping notifications`);
+          clearInterval(interval);
+          deviceNotificationIntervals.delete(mobileId);
+          return;
+        }
+
+        if (deviceStatus.notificationCount >= MAX_WORD_NOTIFICATIONS) {
+          console.log(`Max notifications reached for mobileId ${mobileId}`);
+          clearInterval(interval);
+          deviceNotificationIntervals.delete(mobileId);
+          return;
+        }
+
+        // Ensure word index is within bounds of wordDatabase
+        const wordIndex = (baseWordIndex + deviceStatus.notificationCount) % wordDatabase.length;
+        const word = wordDatabase[wordIndex];
+
+        // Add safety check for word
+        if (!word) {
+          console.error(`No word found at index ${wordIndex}. Database length: ${wordDatabase.length}`);
+          return;
+        }
+
+        console.log(`Sending word notification for ${mobileId}:`, word);
+
+        const notificationTitle = `Day ${deviceStatus.daysLearning} - Word ${deviceStatus.notificationCount + 1}`;
+        const notificationBody = `Portuguese: ${word.portuguese} | French: ${word.french}`;
+
+        const result = await sendNotification(
+          deviceToken,
+          notificationTitle,
+          notificationBody,
+          {
+            payload: "word_notification",
+            dayNumber: String(deviceStatus.daysLearning),
+            wordNumber: String(deviceStatus.notificationCount + 1),
+          }
+        );
+
+        if (!result.success) {
+          console.error(`Failed to send notification for ${mobileId}:`, result.error);
+          // Don't return here, continue with the word update even if notification fails
+        }
+
+        // Always update the word status regardless of notification success
+        await updateDeviceNotificationStatus(
+          mobileId,
+          deviceStatus.notificationCount + 1,
+          wordIndex,
+          word
+        );
+
+        if (deviceStatus.notificationCount + 1 === MAX_WORD_NOTIFICATIONS) {
+          handleCompletionNotification(mobileId, deviceToken);
+        }
+      } catch (error) {
+        console.error(`Error in notification interval for ${mobileId}:`, error);
+      }
+    }, NOTIFICATION_INTERVAL_MS);
+
+    deviceNotificationIntervals.set(mobileId, interval);
+    console.log(`Notification schedule started for mobileId ${mobileId}`);
+  } catch (error) {
+    console.error(`Error starting notification schedule for ${mobileId}:`, error);
+    throw error;
+  }
+};
+
+// Separate function to handle completion notification
+const handleCompletionNotification = async (mobileId, deviceToken) => {
+  try {
+    setTimeout(async () => {
+      if (isWithinTimeWindow()) {
+        const summary = await getDeviceSummary(mobileId);
+        const summaryText = `You learned ${
+          summary.totalWords
+        } new words today! You've been learning for ${
+          summary.daysLearning
+        } day${summary.daysLearning !== 1 ? "s" : ""}!`;
+
+        await sendNotification(
+          deviceToken,
+          "Your Today's Task Completed!",
+          summaryText,
+          {
+            payload: "completion_notification",
+            summary: summary.words,
+            daysLearning: String(summary.daysLearning),
+          }
+        );
+        console.log(`Completion notification sent to mobileId ${mobileId}`);
+      }
+    }, COMPLETION_NOTIFICATION_DELAY);
+  } catch (error) {
+    console.error(
+      `Error sending completion notification for ${mobileId}:`,
+      error
+    );
+  }
 };
 
 const createWordsNotification = async (req, res) => {
@@ -431,6 +449,24 @@ const scheduleDaily = () => {
 // Start the daily reset schedule
 scheduleDaily();
 
+const getWordHistory = async (req, res) => {
+  const { mobileId } = req.query;
+  if (!mobileId) {
+    return res.status(400).json({ message: "Mobile ID is required." });
+  }
+
+  try {
+    const summaryHistory = await getWordSummaryHistory(mobileId);
+    res.status(200).json(summaryHistory);
+  } catch (error) {
+    console.error("Error fetching word history:", error);
+    res.status(500).json({ message: "Failed to fetch word history." });
+  }
+};
+
 module.exports = {
   createWordsNotification,
+  getWordHistory,
 };
+
+
