@@ -12,7 +12,7 @@ app.use(express.json());
 app.use("/api/notifications", depositRoutes);
 
 // Start the server
-const PORT = 3000;
+const PORT = process.env.PORT ?? 8000;
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
 });
