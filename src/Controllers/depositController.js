@@ -225,7 +225,7 @@ let currentWordIndex = 0;
 let notificationInterval = null;
 const MAX_WORD_NOTIFICATIONS = 15;
 const TOTAL_NOTIFICATIONS = 16;
-const NOTIFICATION_INTERVAL_MS = 10 * 1000; // 10 seconds for testing
+const NOTIFICATION_INTERVAL_MS = 60 * 60 * 1000; // 1 hour interval
 const START_HOUR = 7; // 7 AM
 const END_HOUR = 22; // 10 PM
 const COMPLETION_NOTIFICATION_DELAY = 5 * 1000; // 5 seconds
@@ -494,7 +494,5 @@ module.exports = {
   createWordsNotification,
   getWordHistory,
 };
-
-
 
 
