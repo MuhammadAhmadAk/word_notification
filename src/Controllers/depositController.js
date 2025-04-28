@@ -231,7 +231,9 @@ let currentWordIndex = 0;
 let notificationInterval = null;
 const MAX_WORD_NOTIFICATIONS = 15;
 //const NOTIFICATION_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes interval
-const NOTIFICATION_INTERVAL_MS = 10 * 1000; // 10 seconds interval
+//const NOTIFICATION_INTERVAL_MS = 10 * 1000; // 10 seconds interval
+const NOTIFICATION_INTERVAL_MS = 1 * 60 * 60 * 1000; // 1 hour interval
+
 
 const START_HOUR = 7;
 const START_MINUTE = 30;
