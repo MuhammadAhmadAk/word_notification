@@ -270,6 +270,7 @@ const createOrUpdateDeviceStatus = async (mobileId, deviceToken = null) => {
       daysLearning: 1,
       lastDayCompleted: null,
       nextDayStart: null,
+      autoRestart: true, // Add auto-restart flag
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       notificationScheduleStatus: {

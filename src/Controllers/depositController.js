@@ -278,6 +278,25 @@ const startNotificationSchedule = async (mobileId, deviceToken) => {
     // Check if outside time window first
     if (!isWithinTimeWindow()) {
       const nextStart = calculateNextDayStart();
+      
+      // If auto-restart is enabled, schedule for next day even if outside time window
+      const deviceStatus = await getDeviceStatus(mobileId);
+      if (deviceStatus && deviceStatus.autoRestart) {
+        console.log(`Outside time window but auto-restart enabled for ${mobileId}, scheduling for next day`);
+        const timeUntilNextDay = nextStart.getTime() - new Date().getTime();
+        
+        setTimeout(() => {
+          startNotificationSchedule(mobileId, deviceToken);
+        }, timeUntilNextDay);
+        
+        return {
+          success: true,
+          message: `Notifications scheduled to auto-start at ${nextStart.toLocaleString()}`,
+          nextStart: nextStart,
+          autoRestart: true
+        };
+      }
+      
       return {
         success: false,
         error: "OUTSIDE_TIME_WINDOW",
@@ -550,6 +569,7 @@ const stopAndPrepareNextDaySchedule = async (mobileId) => {
       nextDayStart: nextStartTime,
       isRunning: false,
       notificationCount: MAX_WORD_NOTIFICATIONS,
+      autoRestart: true, // Add flag to indicate auto-restart is enabled
     });
 
     // Schedule next day's start and reset
@@ -572,6 +592,7 @@ const stopAndPrepareNextDaySchedule = async (mobileId) => {
             currentDate: nextStartTime.toISOString().split("T")[0],
             nextDayStart: null,
             isRunning: false,
+            autoRestart: true, // Maintain auto-restart flag
           }),
           updateDeviceNotificationStatus(
             mobileId,
@@ -779,8 +800,50 @@ const getWordHistory = async (req, res) => {
   }
 };
 
+// Add a new endpoint to enable/disable auto-restart
+const toggleAutoRestart = async (req, res) => {
+  const { mobileId, enabled } = req.body;
+
+  if (!mobileId) {
+    return res.status(400).json({
+      success: false,
+      message: "Mobile ID is required.",
+    });
+  }
+
+  try {
+    const deviceRef = db.collection("devices").doc(mobileId);
+    const statusRef = db.collection("device_status").doc(mobileId);
+    
+    await Promise.all([
+      deviceRef.update({
+        autoRestart: enabled,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }),
+      statusRef.update({
+        autoRestart: enabled,
+        lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+      }),
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      message: `Auto-restart ${enabled ? 'enabled' : 'disabled'} successfully`,
+      autoRestart: enabled
+    });
+  } catch (error) {
+    console.error(`Error toggling auto-restart for ${mobileId}:`, error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update auto-restart setting.",
+    });
+  }
+};
+
 module.exports = {
   createWordsNotification,
   getWordHistory,
   startNotificationSchedule,
+  toggleAutoRestart,
 };
+
